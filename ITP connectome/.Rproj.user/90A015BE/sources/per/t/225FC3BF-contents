@@ -1,0 +1,337 @@
+#----Peptidergic_Percentiles----
+#-------------------------------------------------------------------------------
+# Creates DCV Scores (DCV densities normalized to 1) and percentiles for scores.
+# Shaped for further analysis with KDE.
+#-------------------------------------------------------------------------------
+library(tidyverse)
+library(zoo) #for na.locf
+
+library(DBI)
+library(RSQLite)
+
+library(viridis)
+#library(tidygraph)
+#library(igraph)
+#library(ggraph)
+library(svglite)
+
+# variables:--------------------------------------------------------------------
+
+neuron_filename <- ""
+nt_threshold <- 0.62 #Greater than or equal to
+write_plots <- TRUE
+write_csv = TRUE
+#-------------------------------------------------------------------------------
+# Always Ran
+#-------------------------------------------------------------------------------
+input_path <- "./input/"
+output_path <- "./output/"
+
+dataset_path <- paste0(Sys.getenv("R_USER"), "/drosophila_connectome_shared_data/") #Documents/drosophila_connectome_shared_data of current user.
+if(!dir.exists(file.path(dataset_path))){ #Uses input_path otherwise.
+  dataset_path <- input_path
+}
+
+options(scipen = 30)
+options(dplyr.summarise.inform = FALSE)
+
+if(!dir.exists(file.path(input_path))){
+  dir.create(file.path(input_path))
+}
+if(!dir.exists(file.path(output_path))){
+  dir.create(file.path(output_path))
+}
+if(!dir.exists(file.path(input_path, "tmp"))){
+  dir.create(file.path(input_path, "tmp"))
+}
+
+if(!dir.exists(file.path(paste0(output_path, "plots/putative-peptidergic/")))){
+  dir.create(file.path(paste0(output_path, "plots/putative-peptidergic/")), recursive = TRUE)
+}
+
+if(!dir.exists(file.path(paste0(output_path, "dcv_density/")))){
+  dir.create(file.path(paste0(output_path, "dcv_density/")), recursive = TRUE)
+}
+
+#-------------------------------------------------------------------------------
+# Create full classifications dataframe
+#-------------------------------------------------------------------------------
+#Load CSV
+classification <- read_csv(paste0(dataset_path,"classification.csv"), 
+                           col_types = cols(root_id = col_character(),
+                                            flow = col_character()))
+
+#NT Types of neurons
+nt_types <- read_csv(paste0(dataset_path,"neurons.csv"),
+                     col_types = cols(root_id = col_character()))
+
+
+#Combine neuropil and nt_type
+classification <- left_join(classification, nt_types %>% select(root_id, group, nt_type, nt_type_score), by = "root_id")
+rm(nt_types)
+# Use consolidated cell types---------------------------------------------------
+
+consolidated_cell_types <- read_csv(paste0(dataset_path, "consolidated_cell_types.csv"),
+                                    col_types= cols(root_id = col_character())) %>%
+  rename(cell_type = primary_type) %>%
+  select(-`additional_type(s)`)
+
+classification <- classification %>%
+  rows_update(consolidated_cell_types, by = "root_id")
+
+# Append super class to NA Cell types to help prevent duplicates----------------
+classification$cell_type[is.na(classification$cell_type)] <- paste("NA", classification$super_class[is.na(classification$cell_type)],sep = "_")
+
+#Changes NT NA's to Unknown and appends "Uncertain" to thresholds below variable.
+classification$nt_type[is.na(classification$nt_type)] <- "Unknown"
+
+classification <- classification %>% mutate(nt_type = ifelse(nt_type_score < nt_threshold & nt_type_score != 0.00, paste0(nt_type, "_(LC)"), nt_type))
+
+# Change remaining NAs to chr
+classification[is.na(classification)] <- "NA"
+
+# Make all cell types only 1 super class----------------------------------------
+# Check for >1 super class
+# classification %>%
+# group_by(cell_type) %>%
+# filter(n_distinct(super_class) > 1) %>%
+# summarise(super_class = paste(unique(super_class), collapse = ", "))
+
+# LC10b optic -> visual_projection
+classification <- classification %>%
+  mutate(super_class = ifelse(cell_type == "LC10b", "visual_projection", super_class))
+# MeMe_e02 optic -> visual_projection
+classification <- classification %>%
+  mutate(super_class = ifelse(cell_type == "MeMe_e02", "visual_projection", super_class))
+# R7 optic -> sensory
+classification <- classification %>%
+  mutate(super_class = ifelse(cell_type == "R7", "sensory", super_class))
+
+# differentiated 33 pairs of cell types with >1 super class
+classification <- classification %>% 
+  group_by(cell_type) %>%
+  mutate(cell_type = if(n_distinct(super_class) > 1)
+    paste(cell_type, super_class, sep = "_")
+    else(cell_type))
+
+# Dimensions of neurons
+cell_stats <- read_csv(paste0(dataset_path,"cell_stats.csv"),
+                       col_types = cols(root_id = col_character()))
+
+# Attach dimensions
+classification <- left_join(classification, cell_stats, by = "root_id")
+rm(cell_stats)
+rm(consolidated_cell_types)
+#-------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+#-------------------------------------------------------------------------------
+# Pull data from SQL and transform
+#-------------------------------------------------------------------------------
+con <- dbConnect(RSQLite::SQLite(), paste0(dataset_path, "fafb_783_data.sqlite"))
+
+if(FALSE){ #not run
+  # List tables and head(10) of tables
+  dbListTables(con)
+  dbGetQuery(con, paste("SELECT * FROM", "cell_DCVs", "LIMIT 10"))
+  dbGetQuery(con, paste("SELECT * FROM", "soma_DCVs", "LIMIT 10"))
+  dbGetQuery(con, paste("SELECT * FROM", "edgelist", "LIMIT 10"))
+  dbGetQuery(con, paste("SELECT * FROM", "edgelist_simple", "LIMIT 10"))
+  dbGetQuery(con, paste("SELECT * FROM", "neurontransmitter_predictions_v1", "LIMIT 10"))
+  dbGetQuery(con, paste("SELECT * FROM", "presynapses", "LIMIT 10"))
+  dbGetQuery(con, paste("SELECT * FROM", "postsynapses", "LIMIT 10"))
+  dbGetQuery(con, paste("SELECT * FROM", "meta", "LIMIT 10"))
+}
+
+# # Pull DCV coordinates and metadata for NOIs
+# DCV_soma <- tbl(con, "soma_DCVs") %>%
+#   collect()
+# 
+# DCV_cell <- tbl(con, "cell_DCVs") %>%
+#   collect()
+
+DCV_meta <- tbl(con, "meta") %>%
+  collect()
+dbDisconnect(con)
+
+# Data cleaning
+#-----
+# Consistency same np's written differently
+DCV_meta$known_np[DCV_meta$known_np == "neuropeptide-negative"] <- "negative"
+DCV_meta$known_np <- gsub("myosupressin", "myosuppressin", DCV_meta$known_np, fixed = T)
+
+# Remove duplicate rows
+DCV_meta <- DCV_meta %>% distinct()
+#-----
+
+# Append DCV counts to classification and group by cell type
+DCV_neuron <- classification %>% 
+  left_join(DCV_meta %>%
+              select(root_783, soma_dcv_density, soma_dcv_count, soma_volume, cell_dcv_count, known_np, cable_length),
+            join_by("root_id" == "root_783"))
+DCV_neuron[, c("soma_dcv_density", "soma_dcv_count", "soma_volume", "cell_dcv_count", "cable_length")] <- lapply(DCV_neuron[, c("soma_dcv_density", "soma_dcv_count", "soma_volume", "cell_dcv_count", "cable_length")], as.numeric)
+
+
+# Data cleaning
+#-----
+# Join cell_type + known_np so unique rows form during grouping. 
+DCV_neuron <- DCV_neuron %>% 
+  group_by(cell_type) %>%
+  mutate(n_rows = n_distinct(known_np)) %>%
+  mutate(cell_type = ifelse(n_rows > 1, 
+                            paste(cell_type, known_np, sep = "_"),
+                            cell_type)) %>%
+  select(-n_rows) %>%
+  ungroup()
+#-----
+# Add row for if NP is positive, negative, or unknown.
+DCV_neuron <- DCV_neuron %>%
+  mutate(has_np = case_when(
+    is.na(known_np) ~ "Unknown",
+    known_np == "negative" ~ "Negative",
+    TRUE ~ "Positive"
+  ))
+
+# Calculate cell DCV density by dividing by volume (size_nm)
+DCV_neuron <- DCV_neuron %>%
+  #mutate(cell_dcv_density = cell_dcv_count/size_nm*100000000) #100000000 for scaling so values near 0
+  mutate(cell_dcv_density = cell_dcv_count/size_nm)
+
+# Group by cell types
+DCV_celltypes <- DCV_neuron %>%
+  group_by(super_class, cell_type, known_np, has_np) %>%
+  summarise(
+    cell_dcv_density_narm_mean = mean(cell_dcv_density, na.rm = T),
+    soma_dcv_density_narm_mean = mean(soma_dcv_density, na.rm = T),
+    cell_dcv_density_mean = mean(cell_dcv_density),
+    soma_dcv_density_mean = mean(soma_dcv_density),
+    cell_dcv_count = sum(cell_dcv_count),
+    soma_dcv_count = sum(soma_dcv_count),
+    size_nm = sum(size_nm),
+    soma_volume = sum(soma_volume))
+
+
+# Get only DCVs with known NPs
+# Not all neurons of a celltype are annotated with neuropeptide. Only select known.
+DCV_neuron_knownnp <- DCV_neuron %>%
+  filter(!is.na(known_np))
+DCV_celltypes_knownnp <- DCV_celltypes %>%
+  filter(!is.na(known_np))
+# Should be same as:
+if(FALSE){
+  DCV_celltypes_knownnp2 <- DCV_neuron_knownnp %>%
+    group_by(super_class, cell_type, known_np, has_np) %>%
+    summarise(
+      cell_dcv_density_narm_mean = mean(cell_dcv_density, na.rm = T),
+      soma_dcv_density_narm_mean = mean(soma_dcv_density, na.rm = T),
+      cell_dcv_density_mean = mean(cell_dcv_density),
+      soma_dcv_density_mean = mean(soma_dcv_density),
+      cell_dcv_count = sum(cell_dcv_count),
+      soma_dcv_count = sum(soma_dcv_count),
+      size_nm = sum(size_nm),
+      soma_volume = sum(soma_volume))
+  identical(DCV_celltypes_knownnp, DCV_celltypes_knownnp2)
+}
+
+
+
+
+
+
+
+
+#-------------------------------------------------------------------------------
+# Sort into percentiles
+#-------------------------------------------------------------------------------
+calc_percentiles <- function(df, value, newcolname) {
+  val = df[[value]]
+  
+  percentiles = quantile(val, probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = TRUE)
+  
+  # Set percentiles
+  bin_labels = case_when(
+    val <= percentiles['1%'] ~ "Below 1%",
+    val <= percentiles['5%'] ~ "1%",
+    val <= percentiles['25%'] ~ "5%",
+    val <= percentiles['50%'] ~ "25%",
+    val <= percentiles['75%'] ~ "50%",
+    val <= percentiles['95%'] ~ "75%",
+    val <= percentiles['99%'] ~ "95%",
+    val > percentiles['99%'] ~  "99%",
+    is.na(val) ~ NA,
+    TRUE ~ "Other"
+  )
+  # Assign column
+  df[[newcolname]] = bin_labels
+  
+  # Factor
+  percentile_order = rev(c("99%", "95%", "75%", "50%", "25%", "5%", "1%", "Below 1%"))
+  df[[newcolname]] = factor(df[[newcolname]], levels = percentile_order, ordered = TRUE)
+  return(df)
+}
+#-------------------------------------------------------------------------------
+
+DCV_neuron <- DCV_neuron %>% calc_percentiles("cell_dcv_density", "percentiles_cell")
+DCV_neuron <- DCV_neuron %>% calc_percentiles("soma_dcv_density", "percentiles_soma")
+
+DCV_celltypes <- DCV_celltypes %>% calc_percentiles("cell_dcv_density_mean", "percentiles_cell_mean")
+DCV_celltypes <- DCV_celltypes %>% calc_percentiles("soma_dcv_density_mean", "percentiles_soma_mean")
+DCV_celltypes <- DCV_celltypes %>% calc_percentiles("cell_dcv_density_narm_mean", "percentiles_cell_narm_mean")
+DCV_celltypes <- DCV_celltypes %>% calc_percentiles("soma_dcv_density_narm_mean", "percentiles_soma_narm_mean")
+
+
+
+
+
+
+# Sort by score
+DCV_neuron <- DCV_neuron %>%
+  arrange(desc(cell_dcv_density))
+DCV_celltypes <- DCV_celltypes %>%
+  arrange(desc(cell_dcv_density_mean))
+# Save files
+#-------------------------------------------------------------------------------
+if(write_csv){
+  write_csv(DCV_neuron, paste0(output_path, "dcv_density/", "DCV_neuron", ".csv"))
+  write_csv(DCV_celltypes, paste0(output_path, "dcv_density/", "DCV_celltypes", ".csv"))
+}
+
+
+
+#-------------------------------------------------------------------------------
+# Save quantile
+#-------------------------------------------------------------------------------\
+# 75th and 95th cutoffs.
+DCV_neuron_percentile_75 <- DCV_neuron %>%
+  filter(percentiles_cell > "75%")
+DCV_neuron_percentile_95 <- DCV_neuron %>%
+  filter(percentiles_cell > "95%")
+DCV_neuron_percentile_75_known_np_only <- DCV_neuron %>%
+  filter(percentiles_cell > "75%" & !is.na(known_np))
+DCV_neuron_percentile_95_known_np_only <- DCV_neuron %>%
+  filter(percentiles_cell > "95%" & !is.na(known_np))
+
+# Data downloaded from Codex v783 (classification, cell_stats, neurons, consolidated_cell_types)
+# 0.62 nt threshold. 0.61 and below tagged LC (low confidence)
+# soma_dcv_density is soma_dcv_count/soma_volume * 100000
+# cell_dcv_density is cell_dcv_count/size_nm * 100000000
+# column 'percentiles' is for cell_dcv_density.
+
+if(write_csv){
+  write_csv(DCV_neuron_percentile_75, paste0(output_path, "dcv_density/", "DCV_neuron_percentile_75", ".csv"))
+  write_csv(DCV_neuron_percentile_95, paste0(output_path, "dcv_density/", "DCV_neuron_percentile_95", ".csv"))
+  write_csv(DCV_neuron_percentile_75_known_np_only, paste0(output_path, "dcv_density/", "DCV_neuron_percentile_75_known_np_only", ".csv"))
+  write_csv(DCV_neuron_percentile_95_known_np_only, paste0(output_path, "dcv_density/", "DCV_neuron_percentile_95_known_np_only", ".csv"))
+}
+

@@ -1,0 +1,524 @@
+#----Peptidergic_Cell_Types----
+#-------------------------------------------------------------------------------
+# Queries DCV counts for peptidergic cell types.
+#-------------------------------------------------------------------------------
+library(tidyverse)
+library(zoo) #for na.locf
+
+library(DBI)
+library(RSQLite)
+library(elmr) #for FAFB14.surf
+library(rgl) #for FAFB14.surf
+
+library(viridis)
+#library(tidygraph)
+#library(igraph)
+#library(ggraph)
+library(svglite)
+
+# variables:--------------------------------------------------------------------
+read_csv = TRUE
+write_plots <- TRUE
+write_csv = TRUE
+#-------------------------------------------------------------------------------
+# Always Ran
+#-------------------------------------------------------------------------------
+input_path <- "./input/"
+output_path <- "./output/"
+
+dataset_path <- paste0(Sys.getenv("R_USER"), "/drosophila_connectome_shared_data/") #Documents/drosophila_connectome_shared_data of current user.
+if(!dir.exists(file.path(dataset_path))){ #Uses input_path otherwise.
+  dataset_path <- input_path
+}
+
+options(scipen = 30)
+options(dplyr.summarise.inform = FALSE)
+
+if(!dir.exists(file.path(input_path))){
+  dir.create(file.path(input_path))
+}
+if(!dir.exists(file.path(output_path))){
+  dir.create(file.path(output_path))
+}
+if(!dir.exists(file.path(input_path, "tmp"))){
+  dir.create(file.path(input_path, "tmp"))
+}
+
+if(!dir.exists(file.path(paste0(output_path, "plots/putative-peptidergic/")))){
+  dir.create(file.path(paste0(output_path, "plots/putative-peptidergic/")), recursive = TRUE)
+}
+
+if(!dir.exists(file.path(paste0(output_path, "dcv_density/")))){
+  dir.create(file.path(paste0(output_path, "dcv_density/")), recursive = TRUE)
+}
+
+#-------------------------------------------------------------------------------
+# Read files
+#-------------------------------------------------------------------------------
+if(read_csv){
+  DCV_neuron <- read_csv(paste0(output_path, "dcv_density/", "DCV_neuron", ".csv"),
+                         col_types = cols(root_id = col_character()))
+  DCV_celltypes <- read_csv(paste0(output_path, "dcv_density/", "DCV_celltypes", ".csv"))
+}
+percentile_fct <- function(df, col){
+  percentile_order <- rev(c("99%", "95%", "75%", "50%", "25%", "5%", "1%", "Below 1%"))
+  df[[col]] <- factor(df[[col]], levels = percentile_order, ordered = TRUE)
+  return(df)
+}
+DCV_neuron <- DCV_neuron %>% percentile_fct("percentiles_cell")
+DCV_neuron <- DCV_neuron %>% percentile_fct("percentiles_soma")
+
+DCV_celltypes <- DCV_celltypes %>% percentile_fct("percentiles_cell_mean")
+DCV_celltypes <- DCV_celltypes %>% percentile_fct("percentiles_soma_mean")
+DCV_celltypes <- DCV_celltypes %>% percentile_fct("percentiles_cell_narm_mean")
+DCV_celltypes <- DCV_celltypes %>% percentile_fct("percentiles_soma_narm_mean")
+
+# #-------------------------------------------------------------------------------
+# # KDE Plots by NEURON
+# #-------------------------------------------------------------------------------
+# # Remove groups which shouldn't have soma in brain
+# DCV_neuron_soma <- DCV_neuron %>%
+#   filter(!(super_class %in% c("ascending", "sensory")))
+# # Soma DCV Density
+# percentiles <- quantile(log10(DCV_neuron_soma$soma_dcv_density_mean), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_neuron_soma, aes(x = log10(soma_dcv_density_mean), color = super_class)) +
+#   geom_density(linewidth = 1.5) + 
+#   geom_vline(xintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("soma DCV density (DCVs per unit volume) score, log 10") +
+#   ylab("kernal density estimate") +
+#   theme_minimal()
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "KDE_soma_DCV_neuron", ".pdf"),
+#          width  =  10.0*2, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# # Cell DCV Density
+# percentiles <- quantile(log10(DCV_neuron$cell_dcv_density_mean), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_neuron, aes(x = log10(cell_dcv_density_mean), color = super_class)) +
+#   geom_density(linewidth = 1.5) +
+#   geom_vline(xintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlim(-1.5, NA) +
+#   xlab("cell DCV density (DCVs per unit volume) score, log 10") +
+#   ylab("kernal density estimate") +
+#   theme_minimal()
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "KDE_cell_DCV_neuron", ".pdf"),
+#          width  =  10.0*2, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# #-------------------------------------------------------------------------------
+# # Dot Plots
+# #-------------------------------------------------------------------------------
+# 
+# # Only with Known NPs - Soma DCVs
+# #-------------------------------------------------------------------------------
+# # Calculate average per known np for ordering
+# order <- DCV_neuron_knownnp %>%
+#   group_by(known_np) %>%
+#   summarise(soma_dcv_density_mean = log2(mean(soma_dcv_density_mean, na.rm = T))) %>%
+#   arrange(desc(soma_dcv_density_mean))
+# DCV_neuron_knownnp$known_np <- factor(DCV_neuron_knownnp$known_np, levels = order$known_np)
+# 
+# # Soma DCV Density
+# # Percentiles is for all neurons
+# percentiles <- quantile(log2(DCV_neuron$soma_dcv_density_mean), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_neuron_knownnp, aes(x = known_np, y = log2(soma_dcv_density_mean), color = known_np)) +
+#   geom_point(size = 3) + 
+#   geom_hline(yintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("known neuropeptide") +
+#   ylab("DCV density score, log 2") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "jitter_soma_DCV_neuron_knownnp", ".pdf"),
+#          width  =  18.0, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# # Only with Known NPs - Cell DCVs
+# #-------------------------------------------------------------------------------
+# # Calculate average per known np for ordering
+# order <- DCV_neuron_knownnp %>%
+#   group_by(known_np) %>%
+#   summarise(cell_dcv_density_mean = mean(cell_dcv_density_mean, na.rm = T)) %>%
+#   arrange(desc(cell_dcv_density_mean))
+# DCV_neuron_knownnp$known_np <- factor(DCV_neuron_knownnp$known_np, levels = order$known_np)
+# 
+# # cell DCV Density
+# # Percentiles is for all neurons
+# percentiles <- quantile(DCV_neuron$cell_dcv_density_mean, probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_neuron_knownnp, aes(x = known_np, y = cell_dcv_density_mean, color = known_np)) +
+#   geom_point(size = 3) + 
+#   geom_hline(yintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("known neuropeptide") +
+#   ylab("DCV density score, raw") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "jitter_cell_DCV_neuron_knownnp", ".pdf"),
+#          width  =  18.0, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# #-------------------------------------------------------------------------------
+# # By CELL TYPE - Mean
+# #-------------------------------------------------------------------------------
+# #-------------------------------------------------------------------------------
+# # KDE Plots
+# #-------------------------------------------------------------------------------
+# # Soma DCV Density
+# percentiles <- quantile(log10(DCV_celltypes$soma_dcv_density_mean), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_celltypes, aes(x = log10(soma_dcv_density_mean), color = super_class)) +
+#   geom_density(linewidth = 1.5) + 
+#   geom_vline(xintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("soma DCV density (DCVs per unit volume) score, log 10") +
+#   ylab("kernal density estimate") +
+#   theme_minimal()
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "KDE_soma_DCV_celltype", ".pdf"),
+#          width  =  10.0*2, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# # With na.rm = T ---------------------------------------------------------------
+# # Remove groups which shouldn't have soma in brain
+# soma_dcv_density_mean <- DCV_celltypes %>%
+#   filter(!(super_class %in% c("ascending", "sensory")))
+# # Soma DCV Density
+# percentiles <- quantile(log10(soma_dcv_density_mean$soma_dcv_density_mean_narm), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(soma_dcv_density_mean, aes(x = log10(soma_dcv_density_mean_narm), color = super_class)) +
+#   geom_density(linewidth = 1.5) + 
+#   geom_vline(xintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("soma DCV density (DCVs per unit volume) score, log 10") +
+#   ylab("kernal density estimate") +
+#   theme_minimal()
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "KDE_soma_DCV_celltype_narm", ".pdf"),
+#          width  =  10.0*2, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# # Cell DCVs
+# #-------------------------------------------------------------------------------
+# percentiles <- quantile(log10(DCV_celltypes$cell_dcv_density_mean), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_celltypes, aes(x = log10(cell_dcv_density_mean), color = super_class)) +
+#   geom_density(linewidth = 1.5) +
+#   geom_vline(xintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlim(-1.5, NA) +
+#   xlab("cell DCV density (DCVs per unit volume) score, log 10") +
+#   ylab("kernal density estimate") +
+#   theme_minimal()
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "KDE_cell_DCV_celltype", ".pdf"),
+#          width  =  10.0*2, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# # With na.rm = T ---------------------------------------------------------------
+# # Cell DCV Density
+# percentiles <- quantile(log10(DCV_celltypes$cell_dcv_density_mean_narm), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_celltypes, aes(x = log10(cell_dcv_density_mean_narm), color = super_class)) +
+#   geom_density(linewidth = 1.5) +
+#   geom_vline(xintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlim(-1.5, NA) +
+#   xlab("cell DCV density (DCVs per unit volume) score, log 10") +
+#   ylab("kernal density estimate") +
+#   theme_minimal()
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "KDE_cell_DCV_celltype_narm", ".pdf"),
+#          width  =  10.0*2, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# 
+# #-------------------------------------------------------------------------------
+# # Dot Plots
+# #-------------------------------------------------------------------------------
+# 
+# # Only with Known NPs - Soma DCVs
+# #-------------------------------------------------------------------------------
+# # Calculate average per known np for ordering
+# order <- DCV_celltypes_knownnp %>%
+#   group_by(known_np) %>%
+#   summarise(soma_dcv_density_mean = log2(mean(soma_dcv_density_mean, na.rm = T))) %>%
+#   arrange(desc(soma_dcv_density_mean))
+# DCV_celltypes_knownnp$known_np <- factor(DCV_celltypes_knownnp$known_np, levels = order$known_np)
+# 
+# # Soma DCV Density
+# # Percentiles is for all neurons
+# percentiles <- quantile(log2(DCV_celltypes_knownnp$soma_dcv_density_mean), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_celltypes_knownnp, aes(x = known_np, y = log2(soma_dcv_density_mean), color = known_np)) +
+#   geom_point(size = 3) + 
+#   geom_hline(yintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("known neuropeptide") +
+#   ylab("DCV density score, log 2") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "jitter_soma_DCV_celltype_knownnp", ".pdf"),
+#          width  =  18.0, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# # With na.rm = T ---------------------------------------------------------------
+# # Calculate average per known np for ordering
+# order <- DCV_celltypes_knownnp %>%
+#   group_by(known_np) %>%
+#   summarise(soma_dcv_density_mean_narm = log2(mean(soma_dcv_density_mean_narm, na.rm = T))) %>%
+#   arrange(desc(soma_dcv_density_mean_narm))
+# DCV_celltypes_knownnp$known_np <- factor(DCV_celltypes_knownnp$known_np, levels = order$known_np)
+# 
+# # Soma DCV Density
+# # Percentiles is for all neurons
+# percentiles <- quantile(log2(DCV_celltypes_knownnp$soma_dcv_density_mean_narm), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_celltypes_knownnp, aes(x = known_np, y = log2(soma_dcv_density_mean_narm), color = known_np)) +
+#   geom_point(size = 3) + 
+#   geom_hline(yintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("known neuropeptide") +
+#   ylab("DCV density score, log 2") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "jitter_soma_DCV_celltype_knownnp_narm", ".pdf"),
+#          width  =  18.0, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# # Only with Known NPs - Cell DCVs
+# #-------------------------------------------------------------------------------
+# # Calculate average per known np for ordering
+# order <- DCV_celltypes_knownnp %>%
+#   group_by(known_np) %>%
+#   summarise(cell_dcv_density_mean = mean(cell_dcv_density_mean, na.rm = T)) %>%
+#   arrange(desc(cell_dcv_density_mean))
+# DCV_celltypes_knownnp$known_np <- factor(DCV_celltypes_knownnp$known_np, levels = order$known_np)
+# 
+# # cell DCV Density
+# # Percentiles is for all neurons
+# percentiles <- quantile(DCV_celltypes_knownnp$cell_dcv_density_mean, probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_celltypes_knownnp, aes(x = known_np, y = cell_dcv_density_mean, color = known_np)) +
+#   geom_point(size = 3) + 
+#   geom_hline(yintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("known neuropeptide") +
+#   ylab("DCV density score, raw") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "jitter_cell_DCV_celltype_knownnp", ".pdf"),
+#          width  =  18.0, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# # With na.rm = T  - Cell DCVs --------------------------------------------------
+# # Calculate average per known np for ordering
+# order <- DCV_celltypes_knownnp %>%
+#   group_by(known_np) %>%
+#   summarise(cell_dcv_density_mean_narm = log2(mean(cell_dcv_density_mean_narm, na.rm = T))) %>%
+#   arrange(desc(cell_dcv_density_mean_narm))
+# DCV_celltypes_knownnp$known_np <- factor(DCV_celltypes_knownnp$known_np, levels = order$known_np)
+# 
+# # cell DCV Density
+# # Percentiles is for all neurons
+# percentiles <- quantile(log2(DCV_celltypes_knownnp$cell_dcv_density_mean_narm), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_celltypes_knownnp, aes(x = known_np, y = log2(cell_dcv_density_mean_narm), color = known_np)) +
+#   geom_point(size = 3) + 
+#   geom_hline(yintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("known neuropeptide") +
+#   ylab("DCV density score, log 2") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "jitter_cell_DCV_celltype_knownnp_narm", ".pdf"),
+#          width  =  18.0, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#-------------------------------------------------------------------------------
+# By CELL TYPE - Mean
+#-------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
+# KDE Plots
+#-------------------------------------------------------------------------------
+# Soma DCV Density
+percentiles <- quantile(log10(DCV_celltypes$soma_dcv_density_mean), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+ggplot(DCV_celltypes, aes(x = log10(soma_dcv_density_mean), color = super_class)) +
+  geom_density(linewidth = 1.5) + 
+  geom_vline(xintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+  xlab("soma DCV density (DCVs per unit volume) score, log 10") +
+  ylab("kernal density estimate") +
+  theme_minimal()
+if(write_plots){
+  ggsave(paste0(output_path, "/plots/putative-peptidergic/", "KDE_soma_DCV_celltype", ".pdf"),
+         width  =  10.0*2, height =  7.6, units  =  "in", limitsize = FALSE)
+}
+
+# Cell DCV Density
+percentiles <- quantile(log10(DCV_celltypes$cell_dcv_density_mean), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+ggplot(DCV_celltypes, aes(x = log10(cell_dcv_density_mean), color = super_class)) +
+  geom_density(linewidth = 1.5) +
+  geom_vline(xintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+  #xlim(-1.5, NA) +
+  xlab("cell DCV density (DCVs per unit volume) score, log 10") +
+  ylab("kernal density estimate") +
+  theme_minimal()
+if(write_plots){
+  ggsave(paste0(output_path, "/plots/putative-peptidergic/", "KDE_cell_DCV_celltype", ".pdf"),
+         width  =  10.0*2, height =  7.6, units  =  "in", limitsize = FALSE)
+}
+
+# # na.rm = T
+# #-------------------------------------------------------------------------------
+# # Remove groups which shouldn't have soma in brain
+# soma_dcv_density_mean_mean <- DCV_celltypes %>%
+#   filter(!(super_class %in% c("ascending", "sensory")))
+# # Soma DCV Density
+# percentiles <- quantile(log10(soma_dcv_density_mean$soma_dcv_density_mean_narm), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(soma_dcv_density_mean, aes(x = log10(soma_dcv_density_mean_narm), color = super_class)) +
+#   geom_density(linewidth = 1.5) + 
+#   geom_vline(xintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("soma DCV density (DCVs per unit volume) score, log 10") +
+#   ylab("kernal density estimate") +
+#   theme_minimal()
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "KDE_soma_DCV_celltype_narm", ".pdf"),
+#          width  =  10.0*2, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+# 
+# # Cell DCV Density
+# percentiles <- quantile(log10(DCV_celltypes$cell_dcv_density_mean_narm), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_celltypes, aes(x = log10(cell_dcv_density_mean_narm), color = super_class)) +
+#   geom_density(linewidth = 1.5) +
+#   geom_vline(xintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlim(-1.5, NA) +
+#   xlab("cell DCV density (DCVs per unit volume) score, log 10") +
+#   ylab("kernal density estimate") +
+#   theme_minimal()
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "KDE_cell_DCV_celltype_narm", ".pdf"),
+#          width  =  10.0*2, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+
+#-------------------------------------------------------------------------------
+# Dot Plots
+#-------------------------------------------------------------------------------
+
+# Only with Known NPs
+#-------------------------------------------------------------------------------
+# Calculate average per known np for ordering
+order <- DCV_celltypes_knownnp %>%
+  group_by(known_np) %>%
+  summarise(soma_dcv_density_mean = log2(mean(soma_dcv_density_mean, na.rm = T))) %>%
+  arrange(desc(soma_dcv_density_mean))
+DCV_celltypes_knownnp$known_np <- factor(DCV_celltypes_knownnp$known_np, levels = order$known_np)
+
+# Soma DCV Density
+# Percentiles is for all neurons
+percentiles <- quantile(log2(DCV_celltypes_knownnp$soma_dcv_density_mean), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+ggplot(DCV_celltypes_knownnp, aes(x = known_np, y = log2(soma_dcv_density_mean), color = known_np)) +
+  geom_point(size = 3) + 
+  geom_hline(yintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+  xlab("known neuropeptide") +
+  ylab("DCV density score, log 2") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+if(write_plots){
+  ggsave(paste0(output_path, "/plots/putative-peptidergic/", "jitter_soma_DCV_celltype_knownnp", ".pdf"),
+         width  =  18.0, height =  7.6, units  =  "in", limitsize = FALSE)
+}
+
+# # With na.rm = T ---------------------------------------------------------------
+# # Calculate average per known np for ordering
+# order <- DCV_celltypes_knownnp %>%
+#   group_by(known_np) %>%
+#   summarise(soma_dcv_density_mean_narm = log2(mean(soma_dcv_density_mean_narm, na.rm = T))) %>%
+#   arrange(desc(soma_dcv_density_mean_narm))
+# DCV_celltypes_knownnp$known_np <- factor(DCV_celltypes_knownnp$known_np, levels = order$known_np)
+# 
+# # Soma DCV Density
+# # Percentiles is for all neurons
+# percentiles <- quantile(log2(DCV_celltypes_knownnp$soma_dcv_density_mean_narm), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_celltypes_knownnp, aes(x = known_np, y = log2(soma_dcv_density_mean_narm), color = known_np)) +
+#   geom_point(size = 3) + 
+#   geom_hline(yintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("known neuropeptide") +
+#   ylab("DCV density score, log 2") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "jitter_soma_DCV_celltype_knownnp_narm", ".pdf"),
+#          width  =  18.0, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+
+# Only with Known NPs - Cell DCVs
+#-------------------------------------------------------------------------------
+# Calculate average per known np for ordering
+order <- DCV_celltypes_knownnp %>%
+  group_by(known_np) %>%
+  summarise(cell_dcv_density_mean = mean(cell_dcv_density_mean, na.rm = T)) %>%
+  arrange(desc(cell_dcv_density_mean))
+DCV_celltypes_knownnp$known_np <- factor(DCV_celltypes_knownnp$known_np, levels = order$known_np)
+
+# cell DCV Density
+# Percentiles is for all neurons
+percentiles <- quantile(DCV_celltypes_knownnp$cell_dcv_density_mean, probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+ggplot(DCV_celltypes_knownnp, aes(x = known_np, y = cell_dcv_density_mean, color = known_np)) +
+  geom_point(size = 3) + 
+  geom_hline(yintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+  xlab("known neuropeptide") +
+  ylab("DCV density score, raw") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+if(write_plots){
+  ggsave(paste0(output_path, "/plots/putative-peptidergic/", "jitter_cell_DCV_celltype_knownnp", ".pdf"),
+         width  =  18.0, height =  7.6, units  =  "in", limitsize = FALSE)
+}
+
+# # With na.rm = T  - Cell DCVs --------------------------------------------------
+# # Calculate average per known np for ordering
+# order <- DCV_celltypes_knownnp %>%
+#   group_by(known_np) %>%
+#   summarise(cell_dcv_density_mean_narm = log2(mean(cell_dcv_density_mean_narm, na.rm = T))) %>%
+#   arrange(desc(cell_dcv_density_mean_narm))
+# DCV_celltypes_knownnp$known_np <- factor(DCV_celltypes_knownnp$known_np, levels = order$known_np)
+# 
+# # cell DCV Density
+# # Percentiles is for all neurons
+# percentiles <- quantile(log2(DCV_celltypes_knownnp$cell_dcv_density_mean_narm), probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99), na.rm = T)
+# ggplot(DCV_celltypes_knownnp, aes(x = known_np, y = log2(cell_dcv_density_mean_narm), color = known_np)) +
+#   geom_point(size = 3) + 
+#   geom_hline(yintercept = percentiles, linetype = "dotted", color = "black", linewidth = 0.8) +  # Percentile lines
+#   xlab("known neuropeptide") +
+#   ylab("DCV density score, log 2") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+# if(write_plots){
+#   ggsave(paste0(output_path, "/plots/putative-peptidergic/", "jitter_cell_DCV_celltype_knownnp_narm", ".pdf"),
+#          width  =  18.0, height =  7.6, units  =  "in", limitsize = FALSE)
+# }
+
+
+
+
+
+
+
+
