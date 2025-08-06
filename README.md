@@ -99,7 +99,7 @@ Place the files in the 'input' directory: ITP scRNA analysis/**input**/
 <br>
 
 ### 2.3. Other Files Provided
-1. ITP scRNA.Rproj
+1. ITP scRNA analysis.Rproj
     * Open this file first for project settings and to run Figure 13.R and Figure 13 supplement 3.R
 2. README_FolderStructure.docx
     * Contains instructions and images of folder structure for reference
