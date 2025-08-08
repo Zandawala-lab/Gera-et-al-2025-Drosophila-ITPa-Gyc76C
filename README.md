@@ -2,19 +2,36 @@
 
 This is the R code to replicate connectomic & scRNA analyses in Figure 13 (and Supplemental Figures 1-3) from: <br>
 Gera et al. (2025) Anti-diuretic hormone ITP signals via a guanylate cyclase receptor to modulate systemic homeostasis in *Drosophila* <br>
-https://elifesciences.org/reviewed-preprints/97043
+https://doi.org/10.7554/eLife.97043
 
 
 ## Getting Started
-Download the repository.<br>
-There are 2 folders, one for each analysis type:
-1. Connectome analyses -- ITP connectome folder
-2. scRNA analyses -- ITP scRNA analysis folder
-
-Instructions are also found in the README_FolderStructure documents in each folder.
+Download this repository<br>
 <br>
 
-## 1. Connectome Analysis (Figure 13 - Panels A - F & Supplement 1 & 2) <br>
+There are 2 folders, one for each analysis type:
+1. Connectome analyses -- ITP connectome folder
+2. scRNA analyses -- ITP scRNA analysis folder<br>
+<br>
+
+
+Running the R scripts:<br>
+1. Check that you have downloaded any files needed
+2. Navigate to the folder of interest (ITP connectome or ITP scRNA analysis)
+3. Open the ITP connectome.Rproj (or ITP scRNA analysis.Rproj)
+     * Opens new Rstudio window with associated project settings (paths, etc.)
+     * Located in the main folder
+4. Open the Figure 13.R script (or Figure 13 supplement 3.R) and run code
+     * Found in the **scripts** subfolder<br>
+<br>
+
+
+Instructions are also found in the README_FolderStructure documents in each folder<br>
+
+   
+<br>
+
+## 1. Connectome Analysis (Figure 13 - Panels B - D & Supplement 1) <br>
 
 ### 1.1. Download Files Needed From Codex: https://codex.flywire.ai/api/download?dataset=fafb <br>
 If files have **not** been downloaded, the code will prompt you to do so. <br>
@@ -28,20 +45,22 @@ Files needed from Codex download are: <br>
 
 Place the files in the 'input' directory: ITP connectome/**input**/
 <br>
+<br>
 
 ### 1.2. Files & Folders Provided in: ITP connectome
 
 **input**
 1. version.csv - v783
 2. ITP_v783.csv <br>
-    * Supplementary Table 3: https://elifesciences.org/reviewed-preprints/97043
+    * Supplementary Table 3: https://doi.org/10.7554/eLife.97043
 3. NSC_v783.csv
     *  Available from McKim et al. (2024) NSC connectome paper
-    *  Provided in Supplementary Table 3 - Supporting Information section: https://elifesciences.org/reviewed-preprints/102684#d1e2716
-4. brainmesh.obj
+    *  Provided in Supplementary Table 3 - Supporting Information section: https://doi.org/10.7554/eLife.102684
+4. brainmesh.obj<br>
+<br>
 
-  * If you download the repo from github, this folder should already exist with the files above provided <br>
-  * The code checks to see if input/output folders exist, and will make them if they do not. However, without the input files provided (or needed from codex              download), the rest of the script will not run.
+* If you download the repo from github, this folder should already exist with the files above provided <br>
+* The code checks to see if input/output folders exist, and will make them if they do not. However, without the input files provided (or needed from codex download), the rest of the script will not run.
 <br>
 
 **output** <br>
