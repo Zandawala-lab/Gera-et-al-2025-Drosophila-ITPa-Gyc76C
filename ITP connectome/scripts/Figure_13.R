@@ -1,8 +1,7 @@
-# --- Figure 13 & Figure 13 Supplement 2 ---------------------------------------
+# --- Figure 13 ----------------------------------------------------------------
 # ------------------------------------------------------------------------------
 # This is the code for:
-# Figure 13: Panels A-D (ITP input/output)
-# Figure 13_S2: Panel B (Synapse locations: ITP -> CRZ)
+# Figure 13: Panels B-D (ITP input/output)
 
 # ------------------------------------------------------------------------------
 # Files to download from Codex before running this script:
@@ -115,7 +114,7 @@ synapses = read_delim(paste0(PATH_input,"fafb_v783_princeton_synapse_table.csv")
                       trim_ws = TRUE)
 
 # Classification
-if (!paste0("classification_v", v, ".csv") %in% list.files(PATH_input)) {
+if (!paste0("classification.csv") %in% list.files(PATH_input)) {
   stop("please go to https://codex.flywire.ai/api/download and download the 
        classification file for the current version and save it in './input'.")
 }
@@ -153,14 +152,14 @@ cell_types <- read_delim(paste0(PATH_input, "consolidated_cell_types.csv"),
 
 # ITP ids identified from Codex
 # Provided in current paper (Gera et al.)
-# Supplementary Table 3: https://elifesciences.org/reviewed-preprints/97043
+# Supplementary Table 3: https://doi.org/10.7554/eLife.97043
 ITP_ids = read_delim(paste0(PATH_input,"ITP_v",v,".csv"),
                      delim = ",",
                      col_types = cols(ITP_id = col_character()))
 
 # IDs & names from McKim et al. NSC connectome to link ITP & NSC connections
 # Provided in Supplementary Table 3 - Supporting Information section:
-# https://elifesciences.org/reviewed-preprints/102684#d1e2716
+# https://doi.org/10.7554/eLife.102684
 NSC = read_delim(paste0(PATH_input,"NSC_v",v,".csv"),
                  delim = ",",
                  col_types = cols(NSC_id = col_character()))
@@ -528,15 +527,11 @@ for (itp_type in unique(ITP_input$ITP_name_post)) {
                                                    paste0(filename,"_v", v,".csv")))
       }
       # Assign values to pre_cell_type from pre_class or pre_root_id if they are NA
-      ITP_subset_superclass$pre_cell_type = ifelse(
-        is.na(ITP_subset_superclass$pre_cell_type),
-        ifelse(
-          is.na(ITP_subset_superclass$pre_class),
-          ITP_subset_superclass$pre_root_id,
-          ITP_subset_superclass$pre_class
-        ),
-        ITP_subset_superclass$pre_cell_type
-      )
+      ITP_subset_superclass <- ITP_subset_superclass %>%
+        mutate(pre_cell_type = ifelse(
+            is.na(pre_cell_type),
+            ifelse(is.na(pre_class), pre_root_id, pre_class),
+            pre_cell_type))
       
       # Top 10 pre_cell_types by # of synapses
       top_tmp = ITP_subset_superclass %>%
@@ -710,15 +705,11 @@ for (itp_type in unique(ITP_output$ITP_name_pre)) {
                                                    paste0(filename,"_v", v,".csv")))
       }
       # Assign values to post_cell_type from class or post_root_id if they are NA
-      ITP_subset_superclass$post_cell_type = ifelse(
-        is.na(ITP_subset_superclass$post_cell_type),
-        ifelse(
-          is.na(ITP_subset_superclass$post_class),
-          ITP_subset_superclass$post_root_id,
-          ITP_subset_superclass$post_class
-        ),
-        ITP_subset_superclass$post_cell_type
-      )
+      ITP_subset_superclass <- ITP_subset_superclass %>%
+        mutate(post_cell_type = ifelse(
+            is.na(post_cell_type),
+            ifelse(is.na(post_class), post_root_id, post_class),
+            post_cell_type))
       
       # Top 10 cell_types by # of synapses
       top_tmp = ITP_subset_superclass %>%
@@ -761,76 +752,5 @@ for (itp_type in unique(ITP_output$ITP_name_pre)) {
 # post_root_ids from each file based on ITP type & super class 
 # (e.g.Figure_13D_top10_output_from_5th_LNv_to_central_v783.csv) are put into
 # neuroglancer (https://edit.flywire.ai/) for visualization & screenshots
-
-# ------------------------------------------------------------------------------
-
-
-
-# ------------------------------------------------------------------------------
-# Figure 13 - Supplement 2 - Panel B - Synapse locations for ITP -> CRZ connections
-# Supplement to Figure 13 - Panel F
-# ------------------------------------------------------------------------------
-
-# Data processing, joining, & organization, etc.:-------------------------------
-
-# Join CRZ info (from NSC imported at beginning) with synapse coords
-NSC_join <- NSC
-colnames(NSC_join) <- c("name_post", "post_root_id", "hemisphere_post")
-NSC_synapses <- left_join(synapses_output_ITP, NSC_join, by = "post_root_id")
-CRZ_synapses <- NSC_synapses %>%
-  filter(name_post == "l_NSC_CRZ")
-
-# Synapses includes all (check numbers - < 5 included)
-CRZ_synapses_grouped <- CRZ_synapses %>%
-  group_by(pre_root_id, post_root_id) %>%
-  summarise(n_synapses = n(), .groups = "drop")
-
-# Set threshold consistent with above
-CRZ_connections <- CRZ_synapses_grouped %>%
-  filter(n_synapses >= 5)
-
-# Join synapse coords & ITP to CRZ ids
-ITP_to_CRZ_connects <- synapses_output_ITP %>%
-  semi_join(CRZ_connections, by = c("pre_root_id", "post_root_id"))
-
-
-# Synapse location figure:------------------------------------------------------
-
-# filename: Figure_13S2_B_ITP_to_CRZ_synapse_locs_v783.png
-panel_name = "S2_B_"
-filename_CRZ = "ITP_to_CRZ_synapse_locs_"
-
-# Open a new 3D plot
-open3d()
-# Set high resolution (4K) for plot
-par3d(windowRect = c(0, 0, 3840, 2160)) 
-
-# Plot pre-synaptic positions
-plot3d(ITP_to_CRZ_connects$pre_x, ITP_to_CRZ_connects$pre_y, ITP_to_CRZ_connects$pre_z,
-         col = "black", size = 2, type = "s", add = TRUE)
-
-# Add surface model
-brainmesh <- readOBJ(paste0(PATH_input,"brainmesh.obj"))
-# Plot
-plot3d(brainmesh, add = TRUE, alpha = 0.1, col = "grey")
-# Adjust view
-view3d(userMatrix = rotationMatrix(90 * pi / 90, 1, 0, 0), zoom = 0.5)  
-
-if(write_plots){
-  # Export as html
-  p<-rglwidget(webgl=TRUE, width = 1920, height = 1080)
-  htmltools::save_html(p, file.path(PATH_output, fig_folder_name, 
-                                    paste0(fig_folder_name, panel_name, 
-                                           filename_CRZ, "v", v, ".html")))
-  
-  # Export as png
-  png_filename <- file.path(PATH_output, fig_folder_name, 
-                            paste0(fig_folder_name, panel_name,filename_CRZ, 
-                                   "v", v, ".png"))
-  rgl.snapshot(png_filename)
-}
-
-# Close 3D plot
-close3d()
 
 # ------------------------------------------------------------------------------
