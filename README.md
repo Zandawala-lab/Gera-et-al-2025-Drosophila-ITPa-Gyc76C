@@ -2,7 +2,10 @@
 
 This is the R code to replicate connectomic & scRNA analyses in Figure 13 (and Supplemental Figures 1-3) from: <br>
 Gera et al. (2025) Anti-diuretic hormone ITP signals via a guanylate cyclase receptor to modulate systemic homeostasis in *Drosophila* <br>
-https://doi.org/10.7554/eLife.97043
+https://doi.org/10.7554/eLife.97043 
+<br>
+<br>
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.16747141.svg)](https://doi.org/10.5281/zenodo.16747141)
 
 
 ## Getting Started
